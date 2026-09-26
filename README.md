@@ -12,6 +12,6 @@ By utilizing discriminative deep learning and strict state machines, this system
 
 ## ⚙️ Quick Start
 1. `docker-compose up -d --build`
-2. Test a complete turn: POST to `http://localhost:8000/route-command` with `"مبلغ ۵۰۰ هزار تومان به علی کارت به کارت کن"`. The FSM will return `READY_FOR_EXECUTION`.
+2. Test a complete turn: POST to `http://localhost:8000/route-command` with `"پونصد هزار تومن به علی کارت به کارت کن"`. The FSM will return `READY_FOR_EXECUTION`.
 3. Test a partial turn: POST with `"می‌خوام به علی پول بفرستم"`. The FSM will return `status: INCOMPLETE` and request the missing `AMOUNT` slot.
 4. Check the Response Headers for `X-Inference-Time-MS` and `X-Energy-OOD-Score` observability metrics.
