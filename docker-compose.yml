@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  semantic_router:
+    build: .
+    container_name: neobank_semantic_router
+    ports:
+      - "8000:8000"
+    environment:
+      - OMP_NUM_THREADS=4
