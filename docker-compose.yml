@@ -8,3 +8,16 @@ services:
       - "8000:8000"
     environment:
       - OMP_NUM_THREADS=4
+  
+  chat_simulator:
+    image: python:3.11-slim
+    container_name: neobank_chat_ui
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./frontend:/app/frontend
+      - ./requirements.txt:/app/requirements.txt
+    working_dir: /app
+    command: bash -c "pip install streamlit requests && streamlit run frontend/app.py --server.address 0.0.0.0"
+    depends_on:
+      - semantic_router
