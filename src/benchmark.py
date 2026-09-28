@@ -1,38 +1,44 @@
 import time
 import numpy as np
+import torch
 import onnxruntime as ort
 from transformers import AutoTokenizer
 
-def run_benchmark():
-    tokenizer = AutoTokenizer.from_pretrained("distilbert-base-multilingual-cased")
-    session = ort.InferenceSession("models/semantic_router_int8.onnx", providers=['CPUExecutionProvider'])
+MODEL_PATH = "models/router_int8.onnx"
+TOKENIZER_DIR = "models/tokenizer"
+
+def run_benchmark(n_iterations=500):
+    print(f"Running latency benchmark over {n_iterations} samples...")
+    tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_DIR)
     
-    text = "دویست هزار تومان به رضا کارت به کارت کن"
-    inputs = tokenizer(text, max_length=32, padding="max_length", return_tensors="np")
-    ort_inputs = {
-        "input_ids": inputs["input_ids"].astype(np.int64),
-        "attention_mask": inputs["attention_mask"].astype(np.int64)
+    sess_opts = ort.SessionOptions()
+    sess_opts.intra_op_num_threads = 2
+    sess = ort.InferenceSession(MODEL_PATH, sess_opts, providers=['CPUExecutionProvider'])
+    
+    sample_text = "پونصد هزار تومن به علی کارت به کارت کن"
+    encoded = tokenizer(sample_text, return_tensors="np", truncation=True, max_length=32)
+    inputs = {
+        "input_ids": encoded["input_ids"].astype(np.int64),
+        "attention_mask": encoded["attention_mask"].astype(np.int64)
     }
-
+    
     # Warmup
-    for _ in range(50):
-        _ = session.run(None, ort_inputs)
-
+    for _ in range(25):
+        sess.run(None, inputs)
+        
     latencies = []
-    iterations = 500
-    for _ in range(iterations):
+    for _ in range(n_iterations):
         t0 = time.perf_counter()
-        _ = session.run(None, ort_inputs)
+        sess.run(None, inputs)
         latencies.append((time.perf_counter() - t0) * 1000)
-
-    p50 = np.percentile(latencies, 50)
-    p95 = np.percentile(latencies, 95)
-    p99 = np.percentile(latencies, 99)
-
-    print(f"--- ONNX INT8 Benchmark Results ({iterations} runs) ---")
-    print(f"Median (P50) Latency: {p50:.2f} ms")
-    print(f"95th Percentile (P95): {p95:.2f} ms")
-    print(f"99th Percentile (P99): {p99:.2f} ms")
+        
+    latencies = np.array(latencies)
+    print("\n--- ONNX INT8 CPU BENCHMARK RESULTS ---")
+    print(f"P50 Latency : {np.percentile(latencies, 50):.2f} ms")
+    print(f"P95 Latency : {np.percentile(latencies, 95):.2f} ms")
+    print(f"P99 Latency : {np.percentile(latencies, 99):.2f} ms")
+    print(f"Mean Latency: {np.mean(latencies):.2f} ms")
+    print(f"Throughput  : {1000 / np.mean(latencies):.1f} queries/sec/core")
 
 if __name__ == "__main__":
     run_benchmark()
