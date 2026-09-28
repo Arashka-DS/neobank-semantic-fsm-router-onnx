@@ -89,10 +89,22 @@ def route_command(payload: CommandPayload, response: Response):
     if amount_obj:
         extracted_slots["AMOUNT"] = amount_obj
         
+    # Name Heuristic
     for name in ["علی", "رضا", "مریم", "سارا", "محمد", "پدر", "مادر"]:
         if name in clean_text:
             extracted_slots["RECIPIENT"] = name
             break
+            
+    # Shetab Card Number Extraction (16 consecutive digits)
+    import re
+    card_match = re.search(r'\b\d{16}\b', clean_text)
+    if card_match:
+        extracted_slots["DESTINATION_CARD"] = card_match.group(0)
+        
+    # Bill ID Extraction (8 to 13 digits) - Only applies if intent is Bill Payment
+    bill_match = re.search(r'\b\d{8,13}\b', clean_text)
+    if bill_match and predicted_intent == "BILL_PAYMENT":
+        extracted_slots["BILL_ID"] = bill_match.group(0)
             
     # 4. FSM Multi-Turn Step
     updated_state = fsm.step(payload.session_id, predicted_intent, extracted_slots)
