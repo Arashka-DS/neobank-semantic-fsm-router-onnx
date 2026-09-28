@@ -8,13 +8,11 @@ from transformers import AutoTokenizer
 from src.normalizer import PersianFinancialNormalizer
 from src.state_machine import DialogFSM
 
-app = FastAPI(title="Neobank Semantic Router & Dialog FSM", version="1.0.0")
+app = FastAPI(title="Neobank Semantic Router & Dialog FSM", version="1.1.0")
 
-# Initialize normalizer and state machine
 normalizer = PersianFinancialNormalizer()
 fsm = DialogFSM()
 
-# Model and Tokenizer paths
 MODEL_PATH = "models/router_int8.onnx"
 TOKENIZER_DIR = "models/tokenizer"
 
@@ -39,10 +37,8 @@ class CommandPayload(BaseModel):
     text: str = Field(..., example="پونصد هزار تومن به علی کارت به کارت کن")
 
 def compute_energy_score(logits: np.ndarray, temperature: float = 1.0) -> float:
-    """Computes free thermodynamic energy over logit space: E(x) = -T * logsumexp(logits / T)."""
     shifted = logits / temperature
     max_logit = np.max(shifted)
-    # Numerically stable logsumexp
     logsumexp = max_logit + np.log(np.sum(np.exp(shifted - max_logit)))
     return float(-temperature * logsumexp)
 
@@ -52,38 +48,28 @@ def route_command(payload: CommandPayload, response: Response):
     if ort_session is None:
         init_runtime()
         if ort_session is None:
-            raise HTTPException(status_code=503, detail="Model is still compiling. Try again shortly.")
+            raise HTTPException(status_code=503, detail="Model compiling. Retry shortly.")
 
     start_time = time.perf_counter()
-    
-    # 1. Linguistic Normalization
     clean_text = normalizer.normalize(payload.text)
     
-    # 2. Tokenization
+    # 1. Tokenize & ONNX INT8 Inference
     encoded = tokenizer(clean_text, return_tensors="np", truncation=True, max_length=32, padding=False)
-    input_ids = encoded["input_ids"].astype(np.int64)
-    attention_mask = encoded["attention_mask"].astype(np.int64)
-    
-    # 3. ONNX INT8 CPU Inference
     ort_inputs = {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask
+        "input_ids": encoded["input_ids"].astype(np.int64),
+        "attention_mask": encoded["attention_mask"].astype(np.int64)
     }
-    intent_logits, slot_logits = ort_session.run(None, ort_inputs)
+    intent_logits, _ = ort_session.run(None, ort_inputs)
     
-    # 4. Thermodynamic Out-Of-Distribution (OOD) Gating
+    # 2. Thermodynamic OOD Gating
     raw_intent_logits = intent_logits[0]
     energy_score = compute_energy_score(raw_intent_logits, temperature=1.0)
-    
-    # Measure execution latency
     latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
     
-    # Write custom telemetry to HTTP wire headers
     response.headers["X-Inference-Time-MS"] = str(latency_ms)
     response.headers["X-Energy-OOD-Score"] = f"{energy_score:.4f}"
     
-    # Reject out-of-distribution queries (OOD energy threshold breached)
-    if energy_score > -2.5: # Empirical boundary for ParsBERT financial domain
+    if energy_score > -2.5:
         return {
             "status": "REJECTED_OOD",
             "message": "Query outside banking capability domain.",
@@ -92,23 +78,23 @@ def route_command(payload: CommandPayload, response: Response):
             "latency_ms": latency_ms
         }
 
-    # 5. Intent and Slot Parsing
+    # 3. Intent & Canonical Slot Extraction
     intent_id = int(np.argmax(raw_intent_logits))
     predicted_intent = INTENT_MAP.get(intent_id, "TRANSFER")
     
     extracted_slots = {}
     
-    # Slot heuristic extraction from normalized stream
-    amount = normalizer.extract_numerical_amount(clean_text)
-    if amount > 0:
-        extracted_slots["AMOUNT"] = amount
+    # Canonical Toman/Rial Extraction
+    amount_obj = normalizer.parse_financial_amount(clean_text)
+    if amount_obj:
+        extracted_slots["AMOUNT"] = amount_obj
         
-    for name in ["علی", "رضا", "مریم", "سارا", "محمد"]:
+    for name in ["علی", "رضا", "مریم", "سارا", "محمد", "پدر", "مادر"]:
         if name in clean_text:
             extracted_slots["RECIPIENT"] = name
             break
             
-    # 6. Dialogue State Machine Update
+    # 4. FSM Multi-Turn Step
     updated_state = fsm.step(payload.session_id, predicted_intent, extracted_slots)
     
     return {
