@@ -2,18 +2,9 @@ import re
 
 class PersianFinancialNormalizer:
     def __init__(self):
-        # Character translation tables
         self.char_map = {
-            'ي': 'ی',
-            'ك': 'ک',
-            'دِ': 'د',
-            'بِ': 'ب',
-            'زِ': 'ز',
-            'ذِ': 'ذ',
-            'شِ': 'ش',
-            'سِ': 'س',
-            'ة': 'ه',
-            'ۀ': 'ه',
+            'ي': 'ی', 'ك': 'ک', 'دِ': 'د', 'بِ': 'ب', 'زِ': 'ز',
+            'ذِ': 'ذ', 'شِ': 'ش', 'سِ': 'س', 'ة': 'ه', 'ۀ': 'ه',
         }
         self.digit_map = {
             '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4',
@@ -21,51 +12,79 @@ class PersianFinancialNormalizer:
             '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
             '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
         }
-
-    def normalize(self, text: str) -> str:
-        """Cleans Arabic loan-letters, normalizes whitespace, and handles half-spaces."""
-        if not text:
-            return ""
-            
-        # Character substitutions
-        for k, v in self.char_map.items():
-            text = text.replace(k, v)
-            
-        # Convert Eastern/Persian digits to standard Western digits
-        for k, v in self.digit_map.items():
-            text = text.replace(k, v)
-            
-        # Standardize zero-width non-joiner (half-space)
-        text = re.sub(r'[\u200c\u200b]+', ' ', text)
-        
-        # Clean repetitive whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
-        return text
-
-    def extract_numerical_amount(self, text: str) -> int:
-        """Heuristic extractor for spoken/typed amounts in Tomans/Rials."""
-        normalized = self.normalize(text)
-        
-        # Match explicit digit sequences
-        digits = re.findall(r'\d+', normalized)
-        if digits:
-            val = int(digits[0])
-            if "میلیون" in text:
-                val *= 1_000_000
-            elif "هزار" in text:
-                val *= 1_000
-            return val
-            
-        # Text-based word patterns
-        word_multipliers = {
+        self.word_multipliers = {
+            "میلیارد": 1_000_000_000,
+            "همت": 1_000_000_000_000, # Hezār Milliard Toman (Enterprise scale)
             "میلیون": 1_000_000,
+            "ملیون": 1_000_000,
             "هزار": 1_000,
             "پونصد": 500,
+            "پانصد": 500,
             "دویست": 200,
-            "صد": 100
+            "سیصد": 300,
+            "چهارصد": 400,
+            "ششصد": 600,
+            "هفتصد": 700,
+            "هشتصد": 800,
+            "نهصد": 900
         }
-        total = 0
-        for word, factor in word_multipliers.items():
-            if word in text:
-                total += factor
-        return total if total > 0 else 0
+
+    def normalize(self, text: str) -> str:
+        """Cleans Arabic loan-letters, normalizes whitespace, and half-spaces."""
+        if not text:
+            return ""
+        for k, v in self.char_map.items():
+            text = text.replace(k, v)
+        for k, v in self.digit_map.items():
+            text = text.replace(k, v)
+        text = re.sub(r'[\u200c\u200b]+', ' ', text)
+        return re.sub(r'\s+', ' ', text).strip()
+
+    def parse_financial_amount(self, text: str) -> dict:
+        """
+        Extracts numerical amount, detects currency unit (Toman vs Rial),
+        and canonicalizes to ISO IRR (Iranian Rial = Toman * 10).
+        """
+        clean_text = self.normalize(text)
+        
+        # 1. Detect Explicit Currency Unit
+        if "ریال" in clean_text:
+            detected_unit = "RIAL"
+        elif any(unit in clean_text for unit in ["تومان", "تومن", "ت"]):
+            detected_unit = "TOMAN"
+        else:
+            # Neobank default convention: conversational payments are assumed Tomans
+            detected_unit = "TOMAN"
+
+        # 2. Extract Base Value (Digits + Word Scale Multipliers)
+        digits = re.findall(r'\d+', clean_text)
+        base_value = int(digits[0]) if digits else 0
+        
+        # Handle compound colloquial phrasing (e.g., "500 هزار", "2 میلیون")
+        multiplier = 1
+        for word, factor in self.word_multipliers.items():
+            if word in clean_text:
+                if base_value > 0 and base_value < factor:
+                    base_value *= factor
+                elif base_value == 0:
+                    base_value = factor
+                break
+
+        if base_value == 0:
+            return None
+
+        # 3. Canonicalize to Core Banking Standard (IRR)
+        if detected_unit == "TOMAN":
+            canonical_irr = base_value * 10
+            toman_value = base_value
+        else: # Explicitly RIAL
+            canonical_irr = base_value
+            toman_value = base_value // 10
+
+        return {
+            "parsed_value": base_value,
+            "detected_unit": detected_unit,
+            "canonical_amount_irr": canonical_irr,
+            "amount_toman": toman_value,
+            "formatted_display": f"{toman_value:,} تومان ({canonical_irr:,} ریال)"
+        }
