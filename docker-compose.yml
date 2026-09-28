@@ -1,23 +1,29 @@
 version: '3.8'
 
 services:
-  semantic_router:
+  router_api:
     build: .
-    container_name: neobank_semantic_router
+    container_name: neobank_router_api
     ports:
       - "8000:8000"
-    environment:
-      - OMP_NUM_THREADS=4
-  
-  chat_simulator:
-    image: python:3.11-slim
-    container_name: neobank_chat_ui
+    volumes:
+      - ./src:/app/src
+      - ./models:/app/models
+    # Ensures the model is trained and quantized to INT8 ONNX before Uvicorn starts
+    command: >
+      bash -c "python src/train_and_export.py && 
+               uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload"
+
+  router_ui:
+    build: .
+    container_name: neobank_router_ui
     ports:
       - "8501:8501"
+    environment:
+      - API_URL=http://router_api:8000
     volumes:
       - ./frontend:/app/frontend
-      - ./requirements.txt:/app/requirements.txt
-    working_dir: /app
-    command: bash -c "pip install streamlit requests && streamlit run frontend/app.py --server.address 0.0.0.0"
+      - ./src:/app/src
+    command: streamlit run frontend/app.py --server.address 0.0.0.0
     depends_on:
-      - semantic_router
+      - router_api
