@@ -1,92 +1,59 @@
-import time
+import os
+import json
+import redis
 
-class PersianValueParser:
-    """Parses colloquial Persian amounts into exact integers."""
-    def parse_amount(self, text_slot: str) -> int:
-        if not text_slot:
-            return 0
-            
-        multiplier = 1
-        text = text_slot.replace("تومن", "").replace("تومان", "").replace("ریال", "").strip()
-        
-        if "هزار" in text:
-            multiplier = 1000
-            text = text.replace("هزار", "").strip()
-        elif "میلیون" in text:
-            multiplier = 1000000
-            text = text.replace("میلیون", "").strip()
-        elif "میلیارد" in text:
-            multiplier = 1000000000
-            text = text.replace("میلیارد", "").strip()
-            
-        try:
-            # Handle standard numbers parsed by earlier regex/normalizer
-            numeric_val = float(text)
-            return int(numeric_val * multiplier)
-        except ValueError:
-            return 0 # Fallback for complex unhandled slang
-
-class DialogStateTracker:
+class DialogFSM:
     def __init__(self):
-        # In production, this dictionary is replaced by Redis with a TTL of 300 seconds
-        self.session_store = {}
-        self.parser = PersianValueParser()
-        
-        # Schema definition: what slots are required for which intents to execute
-        self.required_slots = {
-            "card_to_card": ["AMOUNT", "RECIPIENT"],
-            "pay_bill": ["BILL_TYPE"],
-            "check_balance": []
-        }
+        self.redis_client = redis.Redis(
+            host=os.getenv("REDIS_HOST", "localhost"),
+            port=6379,
+            decode_responses=True
+        )
+        self.TTL_SECONDS = 300 # 5-minute session timeout
 
-    def process_turn(self, session_id: str, current_intent: str, extracted_slots: dict, confidence: float):
-        # Initialize or retrieve session
-        if session_id not in self.session_store:
-            self.session_store[session_id] = {
-                "state": "IDLE",
-                "active_intent": current_intent,
-                "collected_slots": {},
-                "created_at": time.time()
-            }
-            
-        session = self.session_store[session_id]
+    def get_state(self, session_id: str) -> dict:
+        state = self.redis_client.get(session_id)
+        if state:
+            return json.loads(state)
+        return {"current_intent": None, "slots": {}, "status": "IDLE"}
+
+    def step(self, session_id: str, intent: str, extracted_slots: dict) -> dict:
+        state = self.get_state(session_id)
         
-        # Merge newly extracted slots into session memory
-        for key, value in extracted_slots.items():
-            if key == "AMOUNT":
-                session["collected_slots"][key] = self.parser.parse_amount(value)
+        # If a new valid intent is detected, override current state context
+        if intent not in ["UNKNOWN", "OOD"] and state["current_intent"] != intent:
+            state["current_intent"] = intent
+            state["slots"] = extracted_slots
+        else:
+            # Merge slots across conversational turns
+            state["slots"].update(extracted_slots)
+            
+        current_intent = state["current_intent"]
+
+        # -----------------------------------------
+        # FSM Routing & Slot Validation Logic
+        # -----------------------------------------
+        if current_intent == "TRANSFER":
+            has_dest = "RECIPIENT" in state["slots"] or "DESTINATION_CARD" in state["slots"]
+            if "AMOUNT" in state["slots"] and has_dest:
+                state["status"] = "READY_FOR_EXECUTION"
+            elif "AMOUNT" not in state["slots"]:
+                state["status"] = "AWAITING_SLOT_AMOUNT"
+            elif not has_dest:
+                state["status"] = "AWAITING_SLOT_DESTINATION"
+                
+        elif current_intent == "BALANCE_INQUIRY":
+            # Balance checks require no slots. Instantly ready.
+            state["status"] = "READY_FOR_EXECUTION"
+            
+        elif current_intent == "BILL_PAYMENT":
+            if "BILL_ID" in state["slots"]:
+                state["status"] = "READY_FOR_EXECUTION"
             else:
-                session["collected_slots"][key] = value
-
-        # Update intent if confidence is extremely high (User changed their mind)
-        if confidence > 0.90 and current_intent != session["active_intent"] and session["state"] != "IDLE":
-            session["active_intent"] = current_intent
-            session["collected_slots"] = {} # Clear slots on context switch
+                state["status"] = "AWAITING_SLOT_BILL_ID"
+                
+        else:
+            state["status"] = "IDLE"
             
-        # State Machine Validation Logic
-        required = self.required_slots.get(session["active_intent"], [])
-        missing = [req for req in required if req not in session["collected_slots"]]
-        
-        if missing:
-            session["state"] = f"AWAITING_{missing[0]}"
-            return {
-                "session_id": session_id,
-                "status": "INCOMPLETE",
-                "dialog_state": session["state"],
-                "missing_slots": missing,
-                "system_prompt": f"Please provide the {missing[0]}."
-            }
-            
-        # All slots collected
-        session["state"] = "READY_FOR_EXECUTION"
-        final_payload = session.copy()
-        
-        # Cleanup session after successful collection
-        del self.session_store[session_id]
-        
-        return {
-            "session_id": session_id,
-            "status": "READY",
-            "dialog_state": "READY_FOR_EXECUTION",
-            "execution_payload": final_payload
-        }
+        self.redis_client.set(session_id, json.dumps(state), ex=self.TTL_SECONDS)
+        return state
