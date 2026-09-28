@@ -1,22 +1,31 @@
 version: '3.8'
 
 services:
+  redis_fsm:
+    image: redis:7-alpine
+    container_name: fsm_redis
+    ports:
+      - "6379:6379"
+
   router_api:
     build: .
-    container_name: neobank_router_api
+    container_name: router_api
     ports:
       - "8000:8000"
+    environment:
+      - REDIS_HOST=redis_fsm
     volumes:
       - ./src:/app/src
       - ./models:/app/models
-    # Ensures the model is trained and quantized to INT8 ONNX before Uvicorn starts
     command: >
       bash -c "python src/train_and_export.py && 
                uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload"
+    depends_on:
+      - redis_fsm
 
   router_ui:
     build: .
-    container_name: neobank_router_ui
+    container_name: router_streamlit
     ports:
       - "8501:8501"
     environment:
