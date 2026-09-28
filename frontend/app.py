@@ -1,111 +1,76 @@
 import streamlit as st
 import requests
-import uuid
-import json
 
-st.set_page_config(page_title="Neobank NLU Engine", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Neobank NLU Router Simulator", layout="wide")
 
-# Initialize Session State
+API_URL = "http://router_api:8000"
+
+st.title("⚡ Neobank Semantic Router & Dialog FSM")
+st.caption("Sub-15ms INT8 ONNX Inference, Thermodynamic Energy OOD Gating, and Multi-Turn FSM Tracking")
+
 if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())[:8]
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "debug_data" not in st.session_state:
-    st.session_state.debug_data = {}
+    st.session_state.session_id = "sess_demo_1001"
 
-st.title("⚡ Neobank Semantic Router & FSM")
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-col1, col2 = st.columns([1.2, 1])
+col1, col2 = st.columns([2, 1])
 
-# --- LEFT COLUMN: Chat Interface ---
 with col1:
-    st.subheader("📱 Banking Assistant")
-    chat_container = st.container(height=500)
+    user_input = st.text_input("Enter natural language banking command (Persian):", 
+                               value="می‌خوام به علی پول بفرستم")
     
-    with chat_container:
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-                
-    user_input = st.chat_input("Type a command (e.g., '۵۰۰ هزار تومن به علی کارت به کارت کن')")
-    
-    if user_input:
-        # Display user message
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        with chat_container:
-            with st.chat_message("user"):
-                st.markdown(user_input)
-                
-        # Call API
-        payload = {"session_id": st.session_state.session_id, "user_query": user_input}
+    c_btn1, c_btn2 = st.columns([1, 4])
+    with c_btn1:
+        submit = st.button("Send Command", type="primary")
+    with c_btn2:
+        if st.button("Reset Session"):
+            st.session_state.session_id = f"sess_demo_{np.random.randint(1000, 9999)}"
+            st.session_state.history = []
+            st.rerun()
+
+    if submit and user_input:
+        payload = {
+            "session_id": st.session_state.session_id,
+            "text": user_input
+        }
         try:
-            res = requests.post("http://semantic_router:8000/route-command", json=payload)
-            res.raise_for_status()
-            data = res.json()
+            resp = requests.post(f"{API_URL}/route-command", json=payload)
+            data = resp.json()
+            headers = resp.headers
             
-            # Extract headers for telemetry
-            latency = res.headers.get("X-Inference-Time-MS", "0")
-            energy = res.headers.get("X-Energy-OOD-Score", "0")
-            
-            # Handle API Response
-            if data.get("status") == "REJECTED_OOD":
-                bot_reply = "⚠️ I didn't understand that as a banking command. Please try again."
-                st.session_state.debug_data = {"OOD": True, "Energy": energy, "Latency": latency}
-            else:
-                fsm = data.get("state_machine", {})
-                nlu = data.get("nlu_layer", {})
-                
-                st.session_state.debug_data = {
-                    "OOD": False,
-                    "Energy": energy,
-                    "Latency": latency,
-                    "Intent": nlu.get("intent"),
-                    "Confidence": nlu.get("confidence"),
-                    "Slots": nlu.get("raw_slots"),
-                    "FSM_State": fsm.get("dialog_state")
-                }
-                
-                if fsm.get("status") == "INCOMPLETE":
-                    missing = ", ".join(fsm.get("missing_slots", []))
-                    bot_reply = f"I can help with that. Please provide the missing detail: **{missing}**"
-                else:
-                    bot_reply = f"✅ Transaction payload ready! Transferring {fsm['execution_payload']['collected_slots']}."
-                    # Reset session ID after successful execution
-                    st.session_state.session_id = str(uuid.uuid4())[:8]
-
+            st.session_state.history.append({
+                "query": user_input,
+                "response": data,
+                "headers": headers
+            })
         except Exception as e:
-            bot_reply = f"System Error: {e}"
-            
-        st.session_state.messages.append({"role": "assistant", "content": bot_reply})
-        with chat_container:
-            with st.chat_message("assistant"):
-                st.markdown(bot_reply)
-        st.rerun()
+            st.error(f"Failed to communicate with Router API: {e}")
 
-# --- RIGHT COLUMN: Developer Observability ---
+    # Render History
+    st.subheader("Turn-by-Turn Dialogue Stream")
+    for item in reversed(st.session_state.history):
+        with st.chat_message("user"):
+            st.write(item["query"])
+        with st.chat_message("assistant"):
+            res = item["response"]
+            if res.get("status") == "REJECTED_OOD":
+                st.error(f"🚨 Out-Of-Distribution Rejected: {res.get('message')}")
+            else:
+                st.json(res)
+
 with col2:
-    st.subheader("⚙️ NLU Telemetry & FSM State")
-    st.markdown("Monitor real-time ONNX extraction and State Machine routing.")
-    
-    debug = st.session_state.debug_data
-    if debug:
-        m1, m2 = st.columns(2)
-        m1.metric("ONNX Inference Latency", f"{debug.get('Latency')} ms")
+    st.subheader("Observability & Headers")
+    if st.session_state.history:
+        latest = st.session_state.history[-1]
+        hdrs = latest["headers"]
+        res = latest["response"]
         
-        # Energy Score styling
-        energy_val = float(debug.get('Energy', 0))
-        energy_color = "normal" if energy_val < -5.0 else "inverse"
-        m2.metric("OOD Energy Score", f"{energy_val:.2f}", delta="Rejection > -5.0", delta_color=energy_color)
+        latency = hdrs.get("X-Inference-Time-MS", res.get("latency_ms", "N/A"))
+        energy = hdrs.get("X-Energy-OOD-Score", f"{res.get('energy_score', 0):.4f}")
         
-        st.divider()
+        st.metric("X-Inference-Time-MS", f"{latency} ms", delta="Sub-15ms Target", delta_color="normal")
+        st.metric("X-Energy-OOD-Score", energy, delta="Threshold: -2.5", delta_color="normal")
         
-        if debug.get("OOD"):
-            st.error("🚨 QUERY REJECTED: Out-Of-Distribution (OOD) detected by Thermodynamics Energy threshold. Stopped before hitting FSM.")
-        else:
-            st.success(f"**NLU Intent:** {debug.get('Intent')} (Conf: {debug.get('Confidence')})")
-            st.info(f"**Active FSM State:** `{debug.get('FSM_State')}`")
-            
-            st.markdown("**Extracted BIO Slots:**")
-            st.json(debug.get('Slots', {}))
-    else:
-        st.info("Awaiting input to generate telemetry...")
+        st.subheader("Current FSM Machine State")
+        st.info(f"FSM Status: **{res.get('dialogue_state', {}).get('status', 'IDLE')}**")
