@@ -95,11 +95,18 @@ def route_command(payload: CommandPayload, response: Response):
             extracted_slots["RECIPIENT"] = name
             break
             
-    # Shetab Card Number Extraction (16 consecutive digits)
-    import re
+    # Shetab Card Extraction (16 Digits)
     card_match = re.search(r'\b\d{16}\b', clean_text)
     if card_match:
         extracted_slots["DESTINATION_CARD"] = card_match.group(0)
+        
+    # IBAN (Shaba) Extraction (Optional 'IR' prefix + 24 Digits)
+    iban_match = re.search(r'(?i)(IR)?\s*\d{24}\b', clean_text)
+    if iban_match:
+        # Strip spaces and uppercase to normalize the IBAN
+        extracted_slots["DESTINATION_IBAN"] = iban_match.group(0).replace(" ", "").upper()
+        if not extracted_slots["DESTINATION_IBAN"].startswith("IR"):
+            extracted_slots["DESTINATION_IBAN"] = "IR" + extracted_slots["DESTINATION_IBAN"]
         
     # Bill ID Extraction (8 to 13 digits) - Only applies if intent is Bill Payment
     bill_match = re.search(r'\b\d{8,13}\b', clean_text)
