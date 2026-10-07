@@ -40,7 +40,8 @@ class JointIntentSlotClassifier(nn.Module):
 
 def train_and_export():
     print(f"Initializing Tokenizer & Model: {BASE_MODEL_NAME}...")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME):
+    tokenizer.save_pretrained("models/tokenizer")
     model = JointIntentSlotClassifier(
         BASE_MODEL_NAME, 
         num_intents=len(INTENT_MAP), 
@@ -62,7 +63,7 @@ def train_and_export():
 
     os.makedirs("models", exist_ok=True)
     onnx_path = "models/semantic_router.onnx"
-    quantized_onnx_path = "models/semantic_router_int8.onnx"
+    quantized_onnx_path = "models/router_int8.onnx"
 
     print("Exporting Model to ONNX with Dynamic Axes...")
     torch.onnx.export(
