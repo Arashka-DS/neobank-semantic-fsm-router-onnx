@@ -40,7 +40,7 @@ class JointIntentSlotClassifier(nn.Module):
 
 def train_and_export():
     print(f"Initializing Tokenizer & Model: {BASE_MODEL_NAME}...")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME):
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME)
     tokenizer.save_pretrained("models/tokenizer")
     model = JointIntentSlotClassifier(
         BASE_MODEL_NAME, 
