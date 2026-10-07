@@ -33,4 +33,4 @@ By utilizing discriminative deep learning and deterministic state machines, this
 4. **Inspect Response Headers:**
 Check headers for `X-Inference-Time-MS` and `X-Energy-OOD-Score` observability telemetry.
 5. **Interactive UI:**
-Open the Streamlit dialogue visualizer at `http://localhost:8501`.
+Open the Streamlit dialogue visualizer at `http://localhost:7501`.
