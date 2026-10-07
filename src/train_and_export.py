@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 from transformers import AutoTokenizer, AutoModel
 import onnx
 from onnxruntime.quantization import quantize_dynamic, QuantType
@@ -47,6 +48,32 @@ def train_and_export():
         num_intents=len(INTENT_MAP), 
         num_slots=len(SLOT_LABELS)
     )
+    
+    # --- NEW TRAINING BLOCK ---
+    print("Generating synthetic data and training intent head...")
+    samples = generate_synthetic_corpus(n_samples=1000)
+    
+    # Extract the token lists and join them back into strings for the tokenizer
+    texts = [" ".join(s[0]) for s in samples]
+    intents = torch.tensor([s[2] for s in samples])
+    
+    encoded_train = tokenizer(texts, padding="max_length", max_length=32, truncation=True, return_tensors="pt")
+    dataset = TensorDataset(encoded_train['input_ids'], encoded_train['attention_mask'], intents)
+    loader = DataLoader(dataset, batch_size=32, shuffle=True)
+    
+    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
+    criterion = nn.CrossEntropyLoss()
+    
+    model.train()
+    for batch in loader:
+        optimizer.zero_grad()
+        b_ids, b_mask, b_labels = batch
+        intent_logits, _ = model(b_ids, b_mask)
+        loss = criterion(intent_logits, b_labels)
+        loss.backward()
+        optimizer.step()
+    # --------------------------
+
     model.eval()
 
     # Create dummy inputs for ONNX tracing
