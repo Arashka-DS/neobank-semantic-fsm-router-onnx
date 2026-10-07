@@ -1,4 +1,5 @@
 import streamlit as st
+import numpy as np
 import requests
 
 st.set_page_config(page_title="Neobank NLU Router Simulator", layout="wide")
