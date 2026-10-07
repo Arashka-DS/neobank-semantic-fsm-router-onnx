@@ -16,7 +16,7 @@ services:
       - ./src:/app/src
       - ./models:/app/models
     command: >
-      bash -c "python src/train_and_export.py && 
+      bash -c "python -m src.train_and_export && 
                uvicorn src.api:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
       - redis_fsm
